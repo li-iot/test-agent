@@ -28,13 +28,12 @@ ChromaDB 向量库（86 条 Flask 真实 bug 修复语料）
 
 ## 快速开始
 
-    pip install -r requirements.txt
-    配置 .env（参考 .env.example）
-    python -m uvicorn src.api.main:api --port 8000
+安装依赖并启动服务：
 
-调用接口：
+```bash
+pip install -r requirements.txt
+python -m uvicorn src.api.main:api --port 8000
 
-    curl -X POST http://127.0.0.1:8000/analyze -H "Content-Type: application/json" -d "{\"bug_desc\": \"GET /add?a=2&b=3 应该返回 5，实际返回了 -1\"}"
 
 ## 评估结果
 
