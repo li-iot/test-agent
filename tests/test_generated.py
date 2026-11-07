@@ -9,65 +9,67 @@ def client():
         yield c
 
 
-def test_add_positive_integers(client):
-    resp = client.get("/add?a=2&b=3")
+def test_login_returns_200(client):
+    resp = client.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
     assert resp.status_code == 200
+
+
+def test_login_returns_json(client):
+    resp = client.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
     data = resp.get_json()
     assert data is not None
-    assert data.get("result") == 5
 
 
-def test_add_zero_and_positive(client):
-    resp = client.get("/add?a=0&b=7")
+def test_login_success_flag(client):
+    resp = client.post(
+        "/login",
+        json={"username": "testuser", "password": "testpass"},
+    )
+    data = resp.get_json()
+    assert data.get("success") is True
+
+
+def test_login_missing_fields(client):
+    resp = client.post("/login", json={})
+    assert resp.status_code in (400, 401, 422)
+
+
+def test_login_wrong_password(client):
+    resp = client.post(
+        "/login",
+        json={"username": "testuser", "password": "wrongpass"},
+    )
+    assert resp.status_code in (401, 403)
+
+
+def test_get_user_returns_200(client):
+    resp = client.get("/user/1")
     assert resp.status_code == 200
+
+
+def test_get_user_returns_json(client):
+    resp = client.get("/user/1")
     data = resp.get_json()
     assert data is not None
-    assert data.get("result") == 7
 
 
-def test_add_negative_numbers(client):
-    resp = client.get("/add?a=-4&b=-6")
-    assert resp.status_code == 200
+def test_get_user_has_id(client):
+    resp = client.get("/user/1")
     data = resp.get_json()
-    assert data is not None
-    assert data.get("result") == -10
+    assert "id" in data
 
 
-def test_add_mixed_sign(client):
-    resp = client.get("/add?a=-5&b=8")
-    assert resp.status_code == 200
-    data = resp.get_json()
-    assert data is not None
-    assert data.get("result") == 3
+def test_get_nonexistent_user(client):
+    resp = client.get("/user/999999")
+    assert resp.status_code == 404
 
 
-def test_add_large_numbers(client):
-    resp = client.get("/add?a=1000000&b=2345678")
-    assert resp.status_code == 200
-    data = resp.get_json()
-    assert data is not None
-    assert data.get("result") == 3345678
-
-
-def test_add_both_zero(client):
-    resp = client.get("/add?a=0&b=0")
-    assert resp.status_code == 200
-    data = resp.get_json()
-    assert data is not None
-    assert data.get("result") == 0
-
-
-def test_add_same_numbers(client):
-    resp = client.get("/add?a=42&b=42")
-    assert resp.status_code == 200
-    data = resp.get_json()
-    assert data is not None
-    assert data.get("result") == 84
-
-
-def test_add_result_not_negative_one(client):
-    resp = client.get("/add?a=2&b=3")
-    assert resp.status_code == 200
-    data = resp.get_json()
-    assert data is not None
-    assert data.get("result") != -1
+def test_get_user_invalid_id(client):
+    resp = client.get("/user/abc")
+    assert resp.status_code in (400, 404)
