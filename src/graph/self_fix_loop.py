@@ -1,11 +1,11 @@
-"""自动修复闭环：跑测试 → 失败则读代码 → LLM 修复 → 重跑，最多 3 轮 → 输出报告"""
+"""自动修复闭环：跑测试 → 失败则读代码 → LLM 修复 → 重跑，最多 N 轮"""
 import os
 import sys
 import difflib
 import subprocess
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # 让项目根可 import
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -18,11 +18,10 @@ client = OpenAI(
     base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
 )
 MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 TARGET = "sut/buggy_app.py"
 TEST_FILE = "tests/test_fix_demo.py"
-BUG_DESC = "GET /add?a=2&b=3 应该返回 5，实际返回了 -1"
-MAX_ROUNDS = 3
 
 TEST_CODE = '''import json
 from sut.buggy_app import app
@@ -47,7 +46,6 @@ def llm(prompt: str) -> str:
 
 
 def strip_fence(text: str) -> str:
-    """去掉模型可能加的 ```python 包裹"""
     if text.startswith("```"):
         lines = text.splitlines()[1:]
         if lines and lines[-1].strip().startswith("```"):
@@ -59,60 +57,62 @@ def strip_fence(text: str) -> str:
 def run_pytest():
     r = subprocess.run(
         [sys.executable, "-m", "pytest", TEST_FILE, "-q"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+        cwd=str(PROJECT_ROOT), capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=120,
     )
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 
-def fix_code(code: str) -> str:
+def fix_code(code: str, bug_desc: str) -> str:
     prompt = f"""你是一名修复工程师。下面是文件 {TARGET} 的内容：
 
 {code}
 
-已知 bug 现象：{BUG_DESC}
+已知 bug 现象：{bug_desc}
 
 请修复代码中的错误逻辑。只输出修复后的完整文件内容，不要任何解释，不要 markdown 代码块标记。"""
     return strip_fence(llm(prompt))
 
 
-def main():
-    Path(TEST_FILE).parent.mkdir(exist_ok=True)
-    Path(TEST_FILE).write_text(TEST_CODE, encoding="utf-8")
+def run_fix_loop(bug_desc: str = "GET /add?a=2&b=3 应该返回 5，实际返回了 -1",
+                 max_rounds: int = 3) -> dict:
+    """执行完整闭环，返回结构化结果（接口和脚本共用）"""
+    (PROJECT_ROOT / TEST_FILE).parent.mkdir(parents=True, exist_ok=True)
+    (PROJECT_ROOT / TEST_FILE).write_text(TEST_CODE, encoding="utf-8")
 
     original = read_file(TARGET)
-    print(f"===== 自动修复闭环开始（最多 {MAX_ROUNDS} 轮）=====")
-    print(f"被测文件: {TARGET}\n测试文件: {TEST_FILE}\n")
+    logs, ok, rounds_used = [], False, 0
 
-    result = "未完成"
-    for rnd in range(1, MAX_ROUNDS + 1):
-        rc, out = run_pytest()
-        print(f"--- 第 {rnd} 轮：执行测试 ---")
+    for rnd in range(1, max_rounds + 1):
+        rounds_used = rnd
+        rc, _ = run_pytest()
+        logs.append(f"第 {rnd} 轮测试: {'通过' if rc == 0 else '失败'}")
         if rc == 0:
-            print("[通过] 测试全部通过，闭环结束\n")
-            result = f"第 {rnd} 轮修复成功"
+            ok = True
             break
-        print("[失败] 开始定位并修复\n")
-
-        code = read_file(TARGET)
-        fixed = fix_code(code)
+        fixed = fix_code(read_file(TARGET), bug_desc)
         if "def add" not in fixed:
-            print("[警告] 模型返回内容异常，跳过本轮\n")
+            logs.append(f"第 {rnd} 轮模型输出异常，跳过")
             continue
         write_file(TARGET, fixed)
-        print(f"[已修复] 写入 {TARGET}（原文件备份为 {TARGET}.bak）\n")
-    else:
-        result = f"{MAX_ROUNDS} 轮后仍未通过，需人工介入"
+        logs.append(f"第 {rnd} 轮已修复并写入 {TARGET}")
 
-    final_code = read_file(TARGET)
-    print("===== 最终报告 =====")
-    print(f"结果: {result}")
-    print(f"备份: {TARGET}.bak")
-    print("\n改动 diff:")
-    for line in difflib.unified_diff(
-        original.splitlines(), final_code.splitlines(),
+    final = read_file(TARGET)
+    diff = "\n".join(difflib.unified_diff(
+        original.splitlines(), final.splitlines(),
         fromfile="修复前", tofile="修复后", lineterm="",
-    ):
+    ))
+    return {"ok": ok, "rounds": rounds_used, "backup": f"{TARGET}.bak",
+            "diff": diff, "logs": logs}
+
+
+def main():
+    r = run_fix_loop()
+    print("===== 最终报告 =====")
+    print(f"结果: {'修复成功' if r['ok'] else '未修复'}")
+    for line in r["logs"]:
         print(line)
+    print(r["diff"])
 
 
 if __name__ == "__main__":

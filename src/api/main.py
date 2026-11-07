@@ -35,3 +35,17 @@ def analyze(req: AnalyzeRequest):
 @api.get("/health")
 def health():
     return {"status": "ok"}
+# ===== 自动修复闭环接口 =====
+from pydantic import BaseModel
+from src.graph.self_fix_loop import run_fix_loop
+
+
+class FixRequest(BaseModel):
+    bug_desc: str = "GET /add?a=2&b=3 应该返回 5，实际返回了 -1"
+    max_rounds: int = 3
+
+
+@api.post("/fix")
+def fix_endpoint(req: FixRequest):
+    """跑完整自动修复闭环：测试 → 失败 → 改代码 → 重跑 → 报告"""
+    return run_fix_loop(bug_desc=req.bug_desc, max_rounds=req.max_rounds)
